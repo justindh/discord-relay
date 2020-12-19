@@ -1,0 +1,18 @@
+is_webhook: false
+mectrics_enabled: false
+metrics_endpoint: "example.org:1234/"
+forwarder_token: "aaaaaaa"
+error_log_channel_id: "11111111111"
+discord_rus_webhook_url: https://discord.com/api/webhooks/<bot webhook>
+discord_listeners:
+- user_token: "aaaaaaaaaaaaaa"
+  name: vbspy1
+  channels:
+  - name: pings
+    listen_channel_id: "222"
+    forward_channel_id: "333"
+    is_muted: false
+  - name: tests
+    listen_channel_id: "444"
+    forward_channel_id: "555"
+    is_muted: false
