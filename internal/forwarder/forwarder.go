@@ -5,7 +5,7 @@ import (
 	"regexp"
 
 	"github.com/bwmarrin/discordgo"
-	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 )
 
 // Forwarder Wrapper for the discord session
@@ -13,10 +13,11 @@ type Forwarder struct {
 	*discordgo.Session
 	IsWebHook bool
 	Channels  map[string]string
+	log       *logrus.Logger
 }
 
 // NewForwarder takes in a token and returns a Forward Session
-func NewForwarder(token string, webhook bool, chans map[string]string) (*Forwarder, error) {
+func NewForwarder(token string, webhook bool, chans map[string]string, log *logrus.Logger) (*Forwarder, error) {
 	d, err := discordgo.New(fmt.Sprintf("Bot %s", token))
 	if err != nil {
 		return nil, err
@@ -26,39 +27,38 @@ func NewForwarder(token string, webhook bool, chans map[string]string) (*Forward
 	if err != nil {
 		return nil, err
 	}
-	fs := &Forwarder{d, webhook, chans}
+	fs := &Forwarder{d, webhook, chans, log}
 	return fs, nil
 }
 
 // Send send a message here and we'll figure out how
-func (f *Forwarder) Send(text, channelID string) error {
+func (f *Forwarder) Send(username, text, channelID string) error {
 	if f.IsWebHook {
-		return f.ToWebhook(text, channelID)
+		return f.ToWebhook(username, text, channelID)
 	}
-	return f.ToMessage(text, channelID)
+	return f.ToMessage(username, text, channelID)
 }
 
 // ToMessage forwards a message to the specific chan as a message
-func (f *Forwarder) ToMessage(text string, channelID string) error {
-	_, err := f.ChannelMessageSend(channelID, text)
+func (f *Forwarder) ToMessage(username, text string, channelID string) error {
+	_, err := f.ChannelMessageSend(channelID, fmt.Sprintf("**%s**: %s", username, text))
 	if err != nil {
-		return fmt.Errorf("Error forwarding to Message %s", err)
+		return fmt.Errorf("error forwarding to Message %s", err)
 	}
-	log.Debugf("Set Message with out error?")
 	return nil
 }
 
 // ToWebhook forwards a message to the specific chan as a webhook
-func (f *Forwarder) ToWebhook(text string, channelID string) error {
+func (f *Forwarder) ToWebhook(username, text string, channelID string) error {
 	ws, err := f.ChannelWebhooks(channelID)
 	if err != nil {
-		return fmt.Errorf("Error looking up webook %s", err)
+		return fmt.Errorf("error looking up webook %s", err)
 	}
 	var wh *discordgo.Webhook
 	if len(ws) == 0 {
 		wh, err = f.WebhookCreate(channelID, "botman", "")
 		if err != nil {
-			return fmt.Errorf("Error creating webhook %s", err)
+			return fmt.Errorf("error creating webhook %s", err)
 		}
 	} else {
 		wh = ws[0]
@@ -69,7 +69,7 @@ func (f *Forwarder) ToWebhook(text string, channelID string) error {
 		true,
 		&discordgo.WebhookParams{
 			Content:         text,
-			Username:        "",
+			Username:        username,
 			AvatarURL:       "",
 			TTS:             false,
 			Embeds:          nil,
@@ -77,32 +77,44 @@ func (f *Forwarder) ToWebhook(text string, channelID string) error {
 		})
 
 	if err != nil {
-		return fmt.Errorf("Error forwarding to webhook %s", err)
+		return fmt.Errorf("error forwarding to webhook %s", err)
 	}
 	return nil
 }
 
 //MessageCreate discord handler for new messages
 func (f *Forwarder) MessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
-	log.Debugf("new message %s", m.Content)
 	var forwardChanID string
 	var ok bool
 	// Are we listening to this channel?
 	if forwardChanID, ok = f.Channels[m.ChannelID]; !ok {
-		log.Debugf("didnt find channel: %s", m.ChannelID)
-		log.Debugf("all channels: %v", f.Channels)
+		// f.log.Debugf("didnt find channel: %s", m.ChannelID)
+		// f.log.Debugf("all channels: %v", f.Channels)
 		return
 	}
+
+	if m.Content == "" {
+		l, err := s.ChannelMessages(m.ChannelID, 1, "", "", m.ID)
+		if err != nil {
+			f.log.Errorf("unable to get messages: %s", err)
+			return
+		}
+		m.Content = l[0].Content
+		m.Attachments = l[0].Attachments
+		m.Author = l[0].Author
+	}
+
 	// Get sender info
 	srcMember, err := s.GuildMember(m.GuildID, m.Author.ID)
 	if err != nil {
-		log.Debugf("didnt find srcMember: %s", m.Author.Username)
+		f.log.Debugf("didnt find srcMember: %s", m.Author.Username)
 		return
 	}
+
 	// Prevent this from relaying @mentions through
 	// Todo previously we converted IDs to nice names
 	noAtsReg := regexp.MustCompile(`@(\S+)`)
-	m.Content = noAtsReg.ReplaceAllString(m.Content, "@ $1")
+	m.Content = noAtsReg.ReplaceAllString(m.Content, "**@ $1**")
 
 	// Pull out the links and make them text again
 	var links string
@@ -120,9 +132,10 @@ func (f *Forwarder) MessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	}
 
 	// Finally send a nicely formated message
-	err = f.Send(fmt.Sprintf("**%s**: %s %s", username, m.Content, links), forwardChanID)
+	// f.log.Debugf("u: %s - msg: %s - chanid: %d\n", username, fmt.Sprintf("%s %s", m.Content, links), forwardChanID)
+	err = f.Send(username, fmt.Sprintf("%s %s", m.Content, links), forwardChanID)
 	if err != nil {
-		log.Errorf("error sending: %s", err)
+		f.log.Errorf("error sending: %s", err)
 	}
 
 }

@@ -1,10 +1,9 @@
-FROM golang:1.14
+FROM golang:latest
 
-WORKDIR gosniff/src
+WORKDIR /go/src/app
 COPY . .
 
 RUN go get -d -v ./...
 RUN go install -v ./...
 
-VOLUME /var/gosniff/
-ENTRYPOINT [ "GoSniff", "-p" ]
+ENTRYPOINT [ "discord-relay"]

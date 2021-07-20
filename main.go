@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"flag"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -22,11 +24,15 @@ func init() {
 		log.SetLevel(log.InfoLevel)
 	}
 	log.SetReportCaller(true)
-
 }
 
 func main() {
 	var configPath = flag.String("c", "config.yaml", "specicies the path to the config")
+	// TODO
+	_, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+	}()
 
 	// Parse up the command line flags
 	flag.Parse()
@@ -45,7 +51,7 @@ func main() {
 	}
 
 	// Connect to the destination for all messages
-	f, err := forwarder.NewForwarder(cfg.ForwarderToken, cfg.IsWebhook, cfg.ChannelMap())
+	f, err := forwarder.NewForwarder(cfg.ForwarderToken, cfg.IsWebhook, cfg.ChannelMap(), log.StandardLogger())
 	if err != nil {
 		log.Errorf("Error while creating Forwarder: %s", err)
 		return
@@ -53,14 +59,14 @@ func main() {
 	defer f.Close()
 
 	// Test that we can send to this correctly
-	err = f.Send("[log] Forwarder Connected", cfg.ErrorLogChannelID)
+	err = f.Send("[log]", "Forwarder Connected", cfg.ErrorLogChannelID)
 	if err != nil {
 		log.Errorf("Error while sending to log: %s", err)
 		return
 	}
 
 	// Open up all the listners and start processing messages.
-	l, err := listener.NewListeners(cfg.ListenerTokens(), f)
+	l, err := listener.NewListeners(cfg.ListenerTokens(), f, &log.Logger{})
 	if err != nil {
 		log.Errorf("Error while creating listeners: %s", err)
 		return
@@ -68,12 +74,17 @@ func main() {
 
 	defer l.Close()
 
-	log.Infoln("Relay is now running.  Press CTRL-C to exit.")
+	err = f.Send("[log]", fmt.Sprintf("Listening on %d clients", len(l.Sessions)), cfg.ErrorLogChannelID)
+	if err != nil {
+		log.Errorf("Error while sending to log: %s", err)
+		return
+	}
 
-	//TODO this isnt the right way to do this....
+	log.Infoln("Relay is now running.  Press CTRL-C to exit.")
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
-	<-sc
-	log.Infoln("Shutting down...")
+	oscall := <-sc
+	log.Infof("Shutting down from: %+v", oscall)
+	cancel()
 
 }
